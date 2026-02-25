@@ -35,13 +35,30 @@ import "./App.css";
 export default App
 */
 
+// src/App.tsx
+// src/App.tsx
+import { Layout } from "./core/Layout";
+
 function App() {
   return (
-    <div className="min-h-screen bg-obsidian flex items-center justify-center">
-      <h1 className="text-emerald font-display text-5xl font-bold bg-vault p-8 rounded-vault shadow-xl">
-        Hello Obsidian!
-      </h1>
-    </div>
+    <Layout>
+      <div className="glass-card p-8 text-center border-emerald/10">
+        <div className="w-20 h-20 bg-emerald/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-emerald/20 text-emerald text-4xl">
+          <i className="fas fa-vault"></i>
+        </div>
+        <h2 className="text-2xl font-bold font-display mb-3">
+          Welcome to the Vault
+        </h2>
+        <p className="text-text-secondary leading-relaxed">
+          Your financial data is stored locally. No cloud, no tracking, just
+          your phone.
+        </p>
+
+        <button className="w-full mt-8 bg-emerald hover:bg-emerald-dark text-obsidian font-bold py-4 rounded-card transition-all transform active:scale-95 shadow-emerald-glow">
+          Initialize My Wallet
+        </button>
+      </div>
+    </Layout>
   );
 }
 

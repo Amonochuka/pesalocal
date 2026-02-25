@@ -4,12 +4,62 @@
 
 @layer base {
   :root {
+    /* Base Palette */
     --bg-obsidian: #0f1113;
     --bg-vault-card: #1a2b3c;
     --accent-emerald: #3bceac;
     --accent-amber: #f7c548;
     --accent-rust: #e76f51;
+    --accent-mint: #8ac926;
+
+    /* Text */
     --text-primary: #faf9f6;
     --text-secondary: #9ba3af;
+
+    /* Functional Glass Colors */
+    --glass-bg: rgba(26, 43, 60, 0.6);
+    --glass-border: rgba(255, 255, 255, 0.05);
   }
+
+  body {
+    @apply bg-obsidian text-text-primary font-body antialiased min-h-screen flex justify-center items-center p-4;
+  }
+}
+
+@layer components {
+  /* The Main Phone Container from your Demo */
+  .phone-frame {
+    @apply max-w-[380px] w-full bg-obsidian rounded-[48px] p-5 
+           border border-emerald/15 shadow-vault relative overflow-hidden;
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.4),
+      0 0 0 1px rgba(59, 206, 172, 0.1);
+  }
+
+  /* Glassmorphism Utility */
+  .glass-card {
+    @apply bg-vault/60 backdrop-blur-xl border border-white/5 shadow-vault rounded-card;
+  }
+
+  /* The Glowing Emerald Icon Style */
+  .logo-glow {
+    @apply bg-emerald text-obsidian shadow-[0_0_20px_rgba(59,206,172,0.15)] -rotate-6;
+  }
+
+  /* Animated Gradient Text */
+  .text-gradient {
+    @apply bg-gradient-to-br from-white via-white to-text-secondary bg-clip-text text-transparent;
+  }
+}
+
+/* Scrollbar Customization for Obsidian Theme */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-obsidian);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-vault-card);
+  border-radius: 10px;
 }
