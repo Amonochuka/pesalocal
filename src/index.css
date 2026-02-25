@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-obsidian: #0f1113;
+    --bg-vault-card: #1a2b3c;
+    --accent-emerald: #3bceac;
+    --accent-amber: #f7c548;
+    --accent-rust: #e76f51;
+    --text-primary: #faf9f6;
+    --text-secondary: #9ba3af;
+  }
+}
