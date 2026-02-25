@@ -57,3 +57,77 @@ func (r *SyncOperationRepo) Delete(id string) error {
 	_, err := r.db.Exec("DELETE FROM sync_operations WHERE id=?", id)
 	return err
 }
+
+func (r *SyncOperationRepo) GetAll() ([]*model.SyncOperation, error) {
+	rows, err := r.db.Query(`
+		SELECT
+			id,
+			entity_type,
+			entity_id,
+			operation,
+			payload,
+			device_id,
+			created_at,
+			retry_count
+		FROM sync_operations
+		ORDER BY created_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ops []*model.SyncOperation
+
+	for rows.Next() {
+		op := &model.SyncOperation{}
+
+		err := rows.Scan(
+			&op.ID,
+			&op.EntityType,
+			&op.EntityID,
+			&op.Operation,
+			&op.Payload,
+			&op.DeviceID,
+			&op.CreatedAt,
+			&op.RetryCount,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		ops = append(ops, op)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return ops, nil
+}
+
+func (r *SyncOperationRepo) Update(op *model.SyncOperation) error {
+	_, err := r.db.Exec(`
+		UPDATE sync_operations
+		SET
+			entity_type = ?,
+			entity_id   = ?,
+			operation   = ?,
+			payload     = ?,
+			device_id   = ?,
+			created_at  = ?,
+			retry_count = ?
+		WHERE id = ?
+	`,
+		op.EntityType,
+		op.EntityID,
+		op.Operation,
+		op.Payload,
+		op.DeviceID,
+		op.CreatedAt,
+		op.RetryCount,
+		op.ID,
+	)
+
+	return err
+}

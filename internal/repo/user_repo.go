@@ -51,3 +51,43 @@ func (r *UserRepo) Update(u *model.User) error {
 	)
 	return err
 }
+
+
+func (r *UserRepo) GetAll() ([]*model.User, error) {
+	rows, err := r.db.Query(`
+		SELECT id, name, email, password, role, device_id, version, created_at, updated_at
+		FROM users
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []*model.User
+
+	for rows.Next() {
+		u := &model.User{}
+		err := rows.Scan(
+			&u.ID,
+			&u.Name,
+			&u.Email,
+			&u.Password,
+			&u.Role,
+			&u.DeviceID,
+			&u.Version,
+			&u.CreatedAt,
+			&u.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		users = append(users, u)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return users, nil
+}
