@@ -3,19 +3,19 @@ package model
 import "time"
 
 type Sale struct {
-	ID        string
-	UserID    string
-	Total     float64
-	DeviceID  string
-	Version   int
-	CreatedAt time.Time
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Total     float64   `json:"total"`
+	DeviceID  string    `json:"device_id"`
+	Version   int       `json:"version"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type SaleItem struct {
-	ID        string
-	SaleID    string
-	ProductID string
-	Quantity  int
-	Price     float64
-	Total     float64
+	ID        string  `json:"id"`
+	SaleID    string  `json:"sale_id"`
+	ProductID string  `json:"product_id"`
+	Quantity  int     `json:"quantity"`
+	Price     float64 `json:"price"`
+	Total     float64 `json:"total"`
 }
