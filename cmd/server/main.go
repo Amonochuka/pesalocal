@@ -18,11 +18,16 @@ import (
 func main() {
 	// Initialize DB
 	// For demo/hackathon, SQLite in-memory or file-based DB
-	db, err := sql.Open("sqlite3", "pesalocal.db")
+	dbPath := "/home/aochuka/Projects/pesalocal/pesalocal.db"
+	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		log.Fatalf("failed to open DB: %v", err)
 	}
 	defer db.Close()
+
+	if err := initDB(db); err != nil {
+		log.Fatalf("failed to initialize DB: %v", err)
+	}
 
 	// Optional: set connection pool if needed
 	db.SetMaxOpenConns(10)
