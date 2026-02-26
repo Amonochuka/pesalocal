@@ -1,11 +1,11 @@
  # **PesaLocal**
-Offline-First Financial Toolkit for Kenyan Small Businesses
+### Offline-First Financial Toolkit for Kenyan Small Businesses
 
 Built for the hackathon theme: ***Local First – Build Our Reality***
 
 ## Overview
 
-PesaLocal is a privacy-first, offline-capable Progressive Web App (PWA) designed for Kenyan small business owners — Mama Mboga, food vendors, boda boda operators — and individuals who rely heavily on M-PESA.
+PesaLocal is a privacy-first, offline-capable Progressive Web App (PWA) designed for Kenyan small business owners ( Mama Mboga, food vendors, boda boda operators ) and individuals who rely heavily on M-PESA.
 
 Unlike traditional fintech or POS systems that require constant internet and cloud storage, PesaLocal works 100% offline and keeps all sensitive data on the user's device.
 
@@ -25,7 +25,7 @@ It combines:
 
 In Kenya:
 
-1. Internet is expensive and unstable
+1. The Internet is expensive and unstable
 
 2. Power outages happen
 
@@ -204,66 +204,71 @@ internal/
  ├── service/    → Business logic
  ├── handlers/   → HTTP endpoints
  ```
-Core Entities
+### Core Entities
 
-Product
+- Product
 
-Sale
+- Sale
 
-SaleItem
+- SaleItem
 
-Purchase
+- Purchase
 
-PurchaseItem
+- PurchaseItem
 
-User
+- User
 
-SyncOperation
+- SyncOperation
 
 Each entity includes:
 
-Version field
+- Version field
 
-Timestamps
+- Timestamps
 
-Conflict detection support
+- Conflict detection support
 
-Sync System
-Flow
+- Sync System
 
-Frontend records offline operations
+### Flow
 
-Operations stored in syncQueue
+#### Frontend
 
-When online → batch POST to /sync/push
+- Records offline operations
 
-Backend:
+- Operations stored in syncQueue
 
-Queues operations
+- When online → batch POST to /sync/push
 
-Applies via appropriate service
+#### Backend:
 
-Handles version conflicts (Last-Write-Wins)
+- Queues operations
 
-Retries failed operations
+- Applies via the appropriate service
+
+- Handles version conflicts (Last-Write-Wins)
+
+- Retries failed operations
 
 Returns:
-
+````
 status: ok
+````
+or 
+````
+status: partial_fail
+````
+#### Conflict Handling
 
-or status: partial_fail
+- Version-based detection
 
-Conflict Handling
+- Retry counter tracking
 
-Version-based detection
+- Partial failure safe handling
 
-Retry counter tracking
+- Successful operations removed from the queue
 
-Partial failure safe handling
-
-Successful operations removed from queue
-
-Example Sync Payload
+#### Example Sync Payload
 ````
 [
   {
