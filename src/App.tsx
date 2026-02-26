@@ -1,63 +1,95 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import viteLogo from "/vite.svg";
-import "./App.css";
-
-/*function App() {
-  const [count, setCount] = useState(0)
-
-  return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
-}
-
-export default App
-*/
-
-// src/App.tsx
-// src/App.tsx
+import React, { useState } from "react";
 import { Layout } from "./core/Layout";
+import { RoleSelection } from "./modules/onboarding/pages/RoleSelection";
+import { PersonalDashboard } from "./modules/personal/pages/PersonalDashboard";
+import { BusinessDashboard } from "./modules/business/pages/BusinessDashboard";
+import { AppMode } from "./core/types";
 
 function App() {
-  return (
-    <Layout>
-      <div className="glass-card p-8 text-center border-emerald/10">
-        <div className="w-20 h-20 bg-emerald/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-emerald/20 text-emerald text-4xl">
-          <i className="fas fa-vault"></i>
-        </div>
-        <h2 className="text-2xl font-bold font-display mb-3">
-          Welcome to the Vault
-        </h2>
-        <p className="text-text-secondary leading-relaxed">
-          Your financial data is stored locally. No cloud, no tracking, just
-          your phone.
-        </p>
+  const [mode, setMode] = useState<AppMode>("onboarding");
+  const [alertCount] = useState(3);
 
-        <button className="w-full mt-8 bg-emerald hover:bg-emerald-dark text-obsidian font-bold py-4 rounded-card transition-all transform active:scale-95 shadow-emerald-glow">
-          Initialize My Wallet
-        </button>
-      </div>
+  const handleSelectRole = (
+    role: "personal" | "business" | "personal-business",
+  ) => {
+    setMode(role);
+  };
+
+  const renderContent = () => {
+    switch (mode) {
+      case "onboarding":
+        return <RoleSelection onSelectRole={handleSelectRole} />;
+      case "personal":
+        return <PersonalDashboard />;
+      case "business":
+        return <BusinessDashboard />;
+      case "personal-business":
+        return (
+          <div className="dashboard-grid">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div
+                className="glass-card p-5 cursor-pointer hover:border-emerald transition-all"
+                onClick={() => setMode("personal")}
+              >
+                <div className="text-text-secondary mb-2">
+                  <i className="fas fa-user mr-2"></i>Personal
+                </div>
+                <div className="text-3xl md:text-4xl font-bold font-display">
+                  KSh 24,850
+                </div>
+                <div className="text-emerald text-sm mt-2">↑ 12%</div>
+              </div>
+              <div
+                className="glass-card p-5 cursor-pointer hover:border-emerald transition-all"
+                onClick={() => setMode("business")}
+              >
+                <div className="text-text-secondary mb-2">
+                  <i className="fas fa-store mr-2"></i>Business
+                </div>
+                <div className="text-3xl md:text-4xl font-bold font-display">
+                  KSh 12,450
+                </div>
+                <div className="text-emerald text-sm mt-2">↑ 8%</div>
+              </div>
+            </div>
+
+            <div className="alert-section">
+              <div className="alert-title">
+                <i className="fas fa-bell"></i> Today's alerts
+              </div>
+              <div className="alert-item">
+                <div className="alert-left">
+                  <div className="alert-icon">
+                    <i className="fas fa-store"></i>
+                  </div>
+                  <div className="alert-details">
+                    <h4>Business: 2 customers owe KSh 900</h4>
+                    <p>Mama Kevin, Boda John</p>
+                  </div>
+                </div>
+              </div>
+              <div className="alert-item">
+                <div className="alert-left">
+                  <div className="alert-icon">
+                    <i className="fas fa-coins"></i>
+                  </div>
+                  <div className="alert-details">
+                    <h4>Personal: KSh 420 in fees</h4>
+                    <p>This month</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <Layout alertCount={alertCount}>
+      <div className="pb-20 md:pb-0">{renderContent()}</div>
     </Layout>
   );
 }
