@@ -21,20 +21,31 @@ func NewProductService(pr *repo.ProductRepo) *ProductService {
 	}
 }
 
-// CreateProduct inserts a new product
+// CreateOrUpdateProduct ensures idempotent behavior for sync
+func (s *ProductService) CreateOrUpdateProduct(p *model.Product) error {
+	if p.Version == 0 {
+		p.Version = 1
+	}
+	if p.UpdatedAt.IsZero() {
+		p.UpdatedAt = time.Now()
+	}
+	return s.productRepo.CreateOrUpdate(p)
+}
+
+// CreateProduct inserts a new product (non-sync usage)
 func (s *ProductService) CreateProduct(p *model.Product) error {
 	p.Version = 1
 	p.UpdatedAt = time.Now()
-	return s.productRepo.Create(p)
+	return s.productRepo.CreateOrUpdate(p) // use CreateOrUpdate to prevent conflict
 }
 
-// UpdateProduct updates product details with conflict checking
+// UpdateProduct updates product details (non-sync usage)
 func (s *ProductService) UpdateProduct(p *model.Product) error {
 	// increment version for optimistic concurrency
 	p.Version += 1
 	p.UpdatedAt = time.Now()
 
-	err := s.productRepo.Update(p)
+	err := s.productRepo.CreateOrUpdate(p) // use CreateOrUpdate instead of old Update
 	if err != nil {
 		return ErrProductConflict
 	}
@@ -57,7 +68,7 @@ func (s *ProductService) AdjustStock(productID string, delta int) error {
 	product.Version += 1
 	product.UpdatedAt = time.Now()
 
-	err = s.productRepo.Update(product)
+	err = s.productRepo.CreateOrUpdate(product) // updated for sync safety
 	if err != nil {
 		return ErrProductConflict
 	}
