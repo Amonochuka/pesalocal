@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"pesalocal/internal/model"
@@ -47,7 +48,8 @@ func (s *SyncService) ProcessSyncOperation(op *model.SyncOperation) error {
 		if err = json.Unmarshal(op.Payload, &p); err != nil {
 			return err
 		}
-		err = s.productSvc.UpdateProduct(&p)
+		// Use idempotent create-or-update
+		err = s.productSvc.productRepo.CreateOrUpdate(&p)
 	case "sale":
 		var sale model.Sale
 		var items []*model.SaleItem
@@ -68,12 +70,14 @@ func (s *SyncService) ProcessSyncOperation(op *model.SyncOperation) error {
 			return err
 		}
 		err = s.purchaseSvc.CreatePurchase(&purchase, items)
+
 	case "user":
 		var u model.User
 		if err = json.Unmarshal(op.Payload, &u); err != nil {
 			return err
 		}
-		err = s.userSvc.UpdateUser(&u)
+		// Use idempotent create-or-update
+		err = s.userSvc.userRepo.CreateOrUpdate(&u)
 	default:
 		return errors.New("unknown entity type")
 	}
@@ -100,8 +104,20 @@ func (s *SyncService) ProcessAllSyncOperations() error {
 		return err
 	}
 
+	// Track failures
+	var failedOps []string
+
 	for _, op := range ops {
-		_ = s.ProcessSyncOperation(op)
+		err := s.ProcessSyncOperation(op)
+		if err != nil {
+			// Log or track failed operation
+			failedOps = append(failedOps, op.ID)
+		}
+	}
+
+	if len(failedOps) > 0 {
+		// Return summary of failed ops
+		return fmt.Errorf("failed to process operations: %v", failedOps)
 	}
 
 	return nil

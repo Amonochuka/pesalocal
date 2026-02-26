@@ -1,3 +1,11 @@
+<<<<<<< HEAD
 .gitignore
 node_modules
 
+=======
+# Ignore local SQLite database
+pesalocal.db
+
+# Ignore JSON test files
+*.json
+>>>>>>> 2bf2e4a378e675aab0413985134f858c0526ec3a

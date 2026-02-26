@@ -22,30 +22,41 @@ func NewUserService(ur *repo.UserRepo) *UserService {
 	}
 }
 
+// CreateOrUpdateUser ensures idempotent sync behavior
+func (s *UserService) CreateOrUpdateUser(u *model.User) error {
+	if u.Version == 0 {
+		u.Version = 1
+	}
+	if u.UpdatedAt.IsZero() {
+		u.UpdatedAt = time.Now()
+	}
+	if u.CreatedAt.IsZero() {
+		u.CreatedAt = time.Now()
+	}
+	return s.userRepo.CreateOrUpdate(u)
+}
+
 // CreateUser creates a new user and hashes the password
 func (s *UserService) CreateUser(u *model.User, plainPassword string) error {
-	// Hash the password
 	hashed, err := bcrypt.GenerateFromPassword([]byte(plainPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
 	u.Password = string(hashed)
-
-	// Initialize version and timestamps
 	u.Version = 1
 	u.CreatedAt = time.Now()
 	u.UpdatedAt = time.Now()
-
-	return s.userRepo.Create(u)
+	return s.userRepo.CreateOrUpdate(u) // idempotent
 }
 
-// UpdateUser updates user details with conflict handling
+// UpdateUser updates user details
 func (s *UserService) UpdateUser(u *model.User) error {
-	// Increment version and update timestamp
 	u.Version += 1
 	u.UpdatedAt = time.Now()
-
-	err := s.userRepo.Update(u)
+	if u.CreatedAt.IsZero() {
+		u.CreatedAt = time.Now()
+	}
+	err := s.userRepo.CreateOrUpdate(u)
 	if err != nil {
 		return ErrUserConflict
 	}
