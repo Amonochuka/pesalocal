@@ -48,7 +48,8 @@ func (s *SyncService) ProcessSyncOperation(op *model.SyncOperation) error {
 		if err = json.Unmarshal(op.Payload, &p); err != nil {
 			return err
 		}
-		err = s.productSvc.UpdateProduct(&p)
+		// Use idempotent create-or-update
+		err = s.productSvc.productRepo.CreateOrUpdate(&p)
 	case "sale":
 		var sale model.Sale
 		var items []*model.SaleItem
@@ -69,12 +70,14 @@ func (s *SyncService) ProcessSyncOperation(op *model.SyncOperation) error {
 			return err
 		}
 		err = s.purchaseSvc.CreatePurchase(&purchase, items)
+
 	case "user":
 		var u model.User
 		if err = json.Unmarshal(op.Payload, &u); err != nil {
 			return err
 		}
-		err = s.userSvc.UpdateUser(&u)
+		// Use idempotent create-or-update
+		err = s.userSvc.userRepo.CreateOrUpdate(&u)
 	default:
 		return errors.New("unknown entity type")
 	}
