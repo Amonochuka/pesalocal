@@ -9,7 +9,6 @@ import (
 	"pesalocal/internal/service"
 )
 
-// IncomingSyncOperation is just for decoding JSON from frontend
 type IncomingSyncOperation struct {
 	ID         string          `json:"id"`
 	EntityType string          `json:"entity_type"`
@@ -65,10 +64,19 @@ func (h *SyncHandler) Push(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Immediately attempt processing
-	_ = h.syncService.ProcessAllSyncOperations()
+	// Attempt processing
+	err := h.syncService.ProcessAllSyncOperations()
 
-	// Return OK
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok"}`))
+	// Prepare response
+	resp := make(map[string]interface{})
+	if err != nil {
+		// Return failed operation IDs
+		resp["status"] = "partial_fail"
+		resp["message"] = err.Error()
+	} else {
+		resp["status"] = "ok"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
