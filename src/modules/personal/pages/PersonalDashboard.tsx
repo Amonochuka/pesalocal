@@ -1,7 +1,99 @@
 // src/modules/personal/pages/PersonalDashboard.tsx
 import React from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db } from "../../../services/storage/db";
+import { formatCurrency } from "../../../core/utils/formatters";
 
 export const PersonalDashboard: React.FC = () => {
+  // Fetch real transactions from IndexedDB
+  const transactions = useLiveQuery(
+    () =>
+      db.transactions
+        .where("type")
+        .equals("personal")
+        .reverse()
+        .sortBy("completionTime")
+        .then((results) => results.slice(0, 5)), // Get last 5 transactions
+    [],
+  );
+
+  // Calculate total balance (last transaction balance)
+  const latestTransaction = useLiveQuery(
+    () => db.transactions.where("type").equals("personal").reverse().first(),
+    [],
+  );
+
+  // Calculate totals for the month
+  const currentMonth = new Date().getMonth();
+  const currentYear = new Date().getFullYear();
+
+  const monthlyStats = useLiveQuery(async () => {
+    const allTransactions = await db.transactions
+      .where("type")
+      .equals("personal")
+      .toArray();
+
+    const thisMonth = allTransactions.filter((tx) => {
+      const txDate = new Date(tx.completionTime);
+      return (
+        txDate.getMonth() === currentMonth &&
+        txDate.getFullYear() === currentYear
+      );
+    });
+
+    const spent = thisMonth
+      .filter((tx) => tx.amount < 0)
+      .reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
+
+    const received = thisMonth
+      .filter((tx) => tx.amount > 0)
+      .reduce((sum, tx) => sum + tx.amount, 0);
+
+    const totalFees = thisMonth.reduce((sum, tx) => sum + (tx.fee || 0), 0);
+
+    return { spent, received, totalFees };
+  }, []);
+
+  // Calculate category spending
+  const categorySpending = useLiveQuery(async () => {
+    const allTransactions = await db.transactions
+      .where("type")
+      .equals("personal")
+      .toArray();
+
+    const thisMonth = allTransactions.filter((tx) => {
+      const txDate = new Date(tx.completionTime);
+      return (
+        txDate.getMonth() === currentMonth &&
+        txDate.getFullYear() === currentYear &&
+        tx.amount < 0
+      ); // Only expenses
+    });
+
+    const categories: Record<string, number> = {};
+    thisMonth.forEach((tx) => {
+      const cat = tx.category || "Other";
+      categories[cat] = (categories[cat] || 0) + Math.abs(tx.amount);
+    });
+
+    return categories;
+  }, []);
+
+  // Sample category percentages (you can make this dynamic later)
+  const getCategoryPercentage = (category: string) => {
+    const total = Object.values(categorySpending || {}).reduce(
+      (a, b) => a + b,
+      0,
+    );
+    const amount = categorySpending?.[category] || 0;
+    return total > 0 ? Math.round((amount / total) * 100) : 0;
+  };
+
+  const balance = latestTransaction?.balance || 24850;
+  const spent = monthlyStats?.spent || 18420;
+  const received = monthlyStats?.received || 22150;
+  const totalFees = monthlyStats?.totalFees || 420;
+
   return (
     <div className="dashboard-grid">
       {/* Balance Card */}
@@ -9,7 +101,7 @@ export const PersonalDashboard: React.FC = () => {
         <div style={{ color: "var(--text-secondary)", marginBottom: "8px" }}>
           Total Balance
         </div>
-        <div className="balance-amount">KSh 24,850</div>
+        <div className="balance-amount">{formatCurrency(balance)}</div>
         <div className="balance-trend">
           <i className="fas fa-arrow-up"></i> 12% from last month
         </div>
@@ -25,7 +117,7 @@ export const PersonalDashboard: React.FC = () => {
             ></i>{" "}
             Spent
           </div>
-          <div className="stat-value">KSh 18,420</div>
+          <div className="stat-value">{formatCurrency(spent)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">
@@ -35,7 +127,7 @@ export const PersonalDashboard: React.FC = () => {
             ></i>{" "}
             Received
           </div>
-          <div className="stat-value">KSh 22,150</div>
+          <div className="stat-value">{formatCurrency(received)}</div>
         </div>
       </div>
 
@@ -53,7 +145,7 @@ export const PersonalDashboard: React.FC = () => {
             }}
           >
             <span>🍔 Food</span>
-            <span>KSh 8,450</span>
+            <span>{formatCurrency(categorySpending?.Food || 8450)}</span>
           </div>
           <div
             style={{
@@ -64,7 +156,7 @@ export const PersonalDashboard: React.FC = () => {
           >
             <div
               style={{
-                width: "45%",
+                width: `${getCategoryPercentage("Food")}%`,
                 height: "100%",
                 background: "var(--accent-emerald)",
                 borderRadius: "3px",
@@ -81,7 +173,7 @@ export const PersonalDashboard: React.FC = () => {
             }}
           >
             <span>🚗 Transport</span>
-            <span>KSh 3,200</span>
+            <span>{formatCurrency(categorySpending?.Transport || 3200)}</span>
           </div>
           <div
             style={{
@@ -92,9 +184,37 @@ export const PersonalDashboard: React.FC = () => {
           >
             <div
               style={{
-                width: "17%",
+                width: `${getCategoryPercentage("Transport")}%`,
                 height: "100%",
                 background: "var(--accent-amber)",
+                borderRadius: "3px",
+              }}
+            ></div>
+          </div>
+        </div>
+        <div style={{ marginBottom: "12px" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "4px",
+            }}
+          >
+            <span>📱 Airtime</span>
+            <span>{formatCurrency(categorySpending?.Airtime || 1450)}</span>
+          </div>
+          <div
+            style={{
+              height: "6px",
+              background: "rgba(255,255,255,0.1)",
+              borderRadius: "3px",
+            }}
+          >
+            <div
+              style={{
+                width: `${getCategoryPercentage("Airtime")}%`,
+                height: "100%",
+                background: "var(--accent-mint)",
                 borderRadius: "3px",
               }}
             ></div>
@@ -117,7 +237,7 @@ export const PersonalDashboard: React.FC = () => {
               <i className="fas fa-coins"></i>
             </div>
             <div className="alert-details">
-              <h4>KSh 420 paid in M-PESA fees</h4>
+              <h4>{formatCurrency(totalFees)} paid in M-PESA fees</h4>
               <p>This month. 20% excise duty included</p>
             </div>
           </div>
@@ -129,31 +249,70 @@ export const PersonalDashboard: React.FC = () => {
         <div className="alert-title">
           <i className="fas fa-history"></i> Recent
         </div>
-        <div className="alert-item">
-          <div className="alert-left">
-            <div
-              className="alert-icon"
-              style={{ background: "rgba(231,111,81,0.1)" }}
-            >
-              <i
-                className="fas fa-arrow-up"
-                style={{ color: "var(--accent-rust)" }}
-              ></i>
+        {transactions && transactions.length > 0 ? (
+          transactions.map((tx) => (
+            <div className="alert-item" key={tx.id}>
+              <div className="alert-left">
+                <div
+                  className="alert-icon"
+                  style={{
+                    background:
+                      tx.amount < 0
+                        ? "rgba(231,111,81,0.1)"
+                        : "rgba(59,206,172,0.1)",
+                  }}
+                >
+                  <i
+                    className={
+                      tx.amount < 0 ? "fas fa-arrow-up" : "fas fa-arrow-down"
+                    }
+                    style={{
+                      color:
+                        tx.amount < 0
+                          ? "var(--accent-rust)"
+                          : "var(--accent-emerald)",
+                    }}
+                  ></i>
+                </div>
+                <div className="alert-details">
+                  <h4>{tx.counterparty || tx.description}</h4>
+                  <p>
+                    {new Date(tx.completionTime).toLocaleDateString("en-KE", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </p>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontWeight: 600 }}>
+                  {tx.amount < 0 ? "-" : "+"}
+                  {formatCurrency(Math.abs(tx.amount))}
+                </div>
+                {tx.fee > 0 && (
+                  <div
+                    style={{ fontSize: "11px", color: "var(--accent-amber)" }}
+                  >
+                    +{formatCurrency(tx.fee)} fee
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="alert-details">
-              <h4>Sent to John</h4>
-              <p>Today, 09:45</p>
+          ))
+        ) : (
+          <div className="alert-item">
+            <div className="alert-left">
+              <div className="alert-icon">
+                <i className="fas fa-inbox"></i>
+              </div>
+              <div className="alert-details">
+                <h4>No transactions yet</h4>
+                <p>Import an M-PESA statement to get started</p>
+              </div>
             </div>
           </div>
-          <div>
-            <div style={{ fontWeight: 600 }}>-KSh 500</div>
-            <div style={{ fontSize: "11px", color: "var(--accent-amber)" }}>
-              +KSh 30 fee
-            </div>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
 };
-
