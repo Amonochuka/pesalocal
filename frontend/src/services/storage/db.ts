@@ -321,9 +321,30 @@
 
 // src/services/storage/db.ts
 // Cashlet — Dexie (IndexedDB) database
-// Models: Product, Purchase, PurchaseItem, Sale, SaleItem + offlineQueue
+// Models: Transaction (M-PESA), Product, Purchase, PurchaseItem, Sale, SaleItem + offlineQueue
 
 import Dexie, { type Table } from 'dexie';
+
+// ─── Transaction — M-PESA import model (used by PersonalDashboard) ────────────
+// Populated by the PDF parser (src/services/parser/pdfParser.ts).
+// Mirrors what the dashboard queries: type, completionTime, amount, fee,
+// balance, category, counterparty, description.
+
+export type TransactionType = 'personal' | 'business';
+
+export interface Transaction {
+  id: string;                  // UUID — generated on import
+  type: TransactionType;       // 'personal' | 'business'
+  description: string;         // raw M-PESA description line
+  counterparty?: string;       // parsed name (e.g. "John Doe")
+  amount: number;              // positive = received, negative = sent/paid
+  fee: number;                 // M-PESA transaction fee (0 if none)
+  balance: number;             // running balance after this transaction
+  category?: string;           // 'Food' | 'Transport' | 'Airtime' | etc.
+  completionTime: Date;        // parsed from M-PESA statement
+  receiptNo?: string;          // M-PESA receipt number
+  syncStatus: SyncStatus;
+}
 
 // ─── Types (mirror Go backend models) ────────────────────────────────────────
 
@@ -398,19 +419,24 @@ export interface OfflineQueueItem {
 // ─── Database class ───────────────────────────────────────────────────────────
 
 class CashletDB extends Dexie {
-  products!:      Table<Product,      string>;
-  purchases!:     Table<Purchase,     string>;
-  purchaseItems!: Table<PurchaseItem, string>;
-  sales!:         Table<Sale,         string>;
-  saleItems!:     Table<SaleItem,     string>;
+  // M-PESA personal finance
+  transactions!:  Table<Transaction,   string>;
+  // Business inventory / sales
+  products!:      Table<Product,       string>;
+  purchases!:     Table<Purchase,      string>;
+  purchaseItems!: Table<PurchaseItem,  string>;
+  sales!:         Table<Sale,          string>;
+  saleItems!:     Table<SaleItem,      string>;
+  // Offline sync queue (UI mirror only — SW uses CashletSW)
   offlineQueue!:  Table<OfflineQueueItem, number>;
 
   constructor() {
     super('CashletDB');
 
     this.version(1).stores({
-      // Only indexed fields go here — Dexie stores all object properties automatically.
-      // Primary key first, then any fields you'll query/filter on.
+      // Only indexed fields listed here — Dexie stores ALL object properties.
+      // Primary key first, then fields used in .where() / .sortBy() queries.
+      transactions:  'id, type, completionTime, category, syncStatus',
       products:      'id, name, syncStatus, updatedAt',
       purchases:     'id, supplier, deviceId, syncStatus, createdAt',
       purchaseItems: 'id, purchaseId, productId, syncStatus',
@@ -424,14 +450,12 @@ class CashletDB extends Dexie {
 export const db = new CashletDB();
 
 // ─── Helper: generate client-side UUID ───────────────────────────────────────
-// Used so we can create records offline with a stable ID before server sync.
 
 export function generateId(): string {
   return crypto.randomUUID();
 }
 
 // ─── Helper: device fingerprint ──────────────────────────────────────────────
-// Stored in localStorage so it survives SW restarts.
 
 export function getDeviceId(): string {
   const key = 'cashlet_device_id';
@@ -442,7 +466,6 @@ export function getDeviceId(): string {
   }
   return id;
 }
-
 
 // ─── Offline queue helpers (UI-facing only) ──────────────────────────────────
 // The SW manages the actual queue in its own CashletSW IDB.
@@ -457,7 +480,6 @@ export async function getPendingQueueCount(): Promise<number> {
 // The SW queues offline requests in its OWN separate IDB: 'CashletSW'.
 // This app-side flush reads from CashletSW and replays them.
 // It is the fallback for browsers without Background Sync (e.g. iOS Safari).
-// The SW's own flushOfflineQueue() runs the same logic inside the worker.
 
 export async function flushOfflineQueue(): Promise<void> {
   return new Promise<void>((resolve) => {
@@ -499,7 +521,6 @@ export async function flushOfflineQueue(): Promise<void> {
               await updateSyncStatus(item.entityType, item.entityId, 'synced');
             } else {
               const errText = await resp.text();
-              // Leave in queue; SW will retry via Background Sync
               console.warn(`[DB] Sync failed ${item.entityType}:`, errText);
             }
           } catch (_) {
@@ -536,11 +557,13 @@ async function updateSyncStatus(
     case 'product':
       await db.products.update(entityId, { syncStatus: status });
       break;
+    case 'transaction':
+      await db.transactions.update(entityId, { syncStatus: status });
+      break;
   }
 }
 
 // ─── Online event listener (app-side sync fallback) ───────────────────────────
-// Attach this once in main.tsx or App.tsx.
 
 export function registerOnlineSync(): () => void {
   const handler = () => {
@@ -548,5 +571,5 @@ export function registerOnlineSync(): () => void {
     flushOfflineQueue().catch(console.error);
   };
   window.addEventListener('online', handler);
-  return () => window.removeEventListener('online', handler); // cleanup
+  return () => window.removeEventListener('online', handler);
 }
