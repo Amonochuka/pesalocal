@@ -3,34 +3,66 @@ import React from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../../../services/storage/db";
 import { formatCurrency } from "../../../core/utils/formatters";
+import { useUserId } from "../../../hooks/useCurrentUser";
 
 export const PersonalDashboard: React.FC = () => {
-  // Fetch real transactions from IndexedDB
-  const transactions = useLiveQuery(
-    () =>
-      db.transactions
-        .where("type")
-        .equals("personal")
-        .reverse()
-        .sortBy("completionTime")
-        .then((results) => results.slice(0, 5)), // Get last 5 transactions
-    [],
-  );
+  const userId = useUserId();
 
-  // Calculate total balance (last transaction balance)
-  const latestTransaction = useLiveQuery(
-    () => db.transactions.where("type").equals("personal").reverse().first(),
-    [],
-  );
+  // If no user is logged in, show login prompt
+  if (!userId) {
+    return (
+      <div className="glass-card p-8 text-center">
+        <div
+          className="w-16 h-16 bg-amber/10 rounded-full flex items-center 
+          justify-center mx-auto mb-4 text-2xl text-amber"
+        >
+          <i className="fas fa-user-lock"></i>
+        </div>
+        <h3 className="text-lg font-display font-bold mb-2">Please Log In</h3>
+        <p className="text-text-secondary text-sm">
+          You need to be logged in to view your personal dashboard
+        </p>
+      </div>
+    );
+  }
 
-  // Calculate totals for the month
+  // Fetch transactions for this specific user
+  const transactions = useLiveQuery(async () => {
+    if (!userId) return [];
+
+    const results = await db.transactions
+      .where("userId")
+      .equals(userId)
+      .and((tx) => tx.type === "personal")
+      .reverse()
+      .sortBy("completionTime");
+
+    return results.slice(0, 5); // Get last 5 transactions
+  }, [userId]);
+
+  // Calculate total balance (last transaction balance) for this user
+  const latestTransaction = useLiveQuery(async () => {
+    if (!userId) return null;
+
+    return await db.transactions
+      .where("userId")
+      .equals(userId)
+      .and((tx) => tx.type === "personal")
+      .reverse()
+      .first();
+  }, [userId]);
+
+  // Calculate totals for the month for this user
   const currentMonth = new Date().getMonth();
   const currentYear = new Date().getFullYear();
 
   const monthlyStats = useLiveQuery(async () => {
+    if (!userId) return { spent: 0, received: 0, totalFees: 0 };
+
     const allTransactions = await db.transactions
-      .where("type")
-      .equals("personal")
+      .where("userId")
+      .equals(userId)
+      .and((tx) => tx.type === "personal")
       .toArray();
 
     const thisMonth = allTransactions.filter((tx) => {
@@ -52,13 +84,16 @@ export const PersonalDashboard: React.FC = () => {
     const totalFees = thisMonth.reduce((sum, tx) => sum + (tx.fee || 0), 0);
 
     return { spent, received, totalFees };
-  }, []);
+  }, [userId, currentMonth, currentYear]);
 
-  // Calculate category spending
+  // Calculate category spending for this user
   const categorySpending = useLiveQuery(async () => {
+    if (!userId) return {};
+
     const allTransactions = await db.transactions
-      .where("type")
-      .equals("personal")
+      .where("userId")
+      .equals(userId)
+      .and((tx) => tx.type === "personal")
       .toArray();
 
     const thisMonth = allTransactions.filter((tx) => {
@@ -77,9 +112,9 @@ export const PersonalDashboard: React.FC = () => {
     });
 
     return categories;
-  }, []);
+  }, [userId, currentMonth, currentYear]);
 
-  // Sample category percentages (you can make this dynamic later)
+  // Calculate category percentages
   const getCategoryPercentage = (category: string) => {
     const total = Object.values(categorySpending || {}).reduce(
       (a, b) => a + b,
@@ -89,10 +124,34 @@ export const PersonalDashboard: React.FC = () => {
     return total > 0 ? Math.round((amount / total) * 100) : 0;
   };
 
-  const balance = latestTransaction?.balance || 24850;
-  const spent = monthlyStats?.spent || 18420;
-  const received = monthlyStats?.received || 22150;
-  const totalFees = monthlyStats?.totalFees || 420;
+  const balance = latestTransaction?.balance || 0;
+  const spent = monthlyStats?.spent || 0;
+  const received = monthlyStats?.received || 0;
+  const totalFees = monthlyStats?.totalFees || 0;
+
+  // Show loading state while fetching data
+  if (
+    transactions === undefined ||
+    monthlyStats === undefined ||
+    categorySpending === undefined
+  ) {
+    return (
+      <div className="glass-card p-8 text-center">
+        <div
+          className="w-16 h-16 bg-emerald/10 rounded-full flex items-center 
+          justify-center mx-auto mb-4 text-2xl text-emerald"
+        >
+          <i className="fas fa-spinner fa-pulse"></i>
+        </div>
+        <h3 className="text-lg font-display font-bold mb-2">
+          Loading your data...
+        </h3>
+        <p className="text-text-secondary text-sm">
+          Please wait while we fetch your transactions
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="dashboard-grid">
@@ -145,7 +204,7 @@ export const PersonalDashboard: React.FC = () => {
             }}
           >
             <span>🍔 Food</span>
-            <span>{formatCurrency(categorySpending?.Food || 8450)}</span>
+            <span>{formatCurrency(categorySpending?.Food || 0)}</span>
           </div>
           <div
             style={{
@@ -173,7 +232,7 @@ export const PersonalDashboard: React.FC = () => {
             }}
           >
             <span>🚗 Transport</span>
-            <span>{formatCurrency(categorySpending?.Transport || 3200)}</span>
+            <span>{formatCurrency(categorySpending?.Transport || 0)}</span>
           </div>
           <div
             style={{
@@ -201,7 +260,7 @@ export const PersonalDashboard: React.FC = () => {
             }}
           >
             <span>📱 Airtime</span>
-            <span>{formatCurrency(categorySpending?.Airtime || 1450)}</span>
+            <span>{formatCurrency(categorySpending?.Airtime || 0)}</span>
           </div>
           <div
             style={{

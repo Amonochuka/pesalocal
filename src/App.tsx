@@ -1,3 +1,4 @@
+// src/App.tsx
 import React, { useState, useEffect } from "react";
 import { Layout } from "./core/Layout";
 import { AuthWrapper } from "./modules/auth/components/AuthWrapper";
@@ -13,6 +14,7 @@ function App() {
   const [alertCount] = useState(3);
   const userId = useUserId();
   const { currentUser } = useAuthStore();
+  const logout = useAuthStore((state) => state.logout);
 
   // Reset to onboarding if no mode is selected (but user is logged in)
   useEffect(() => {
@@ -32,14 +34,20 @@ function App() {
     // In the future, you could save this preference to the user's profile
   };
 
+  const handleModeChange = (newMode: AppMode) => {
+    setMode(newMode);
+  };
+
   const handleLogout = () => {
-    useAuthStore.getState().logout();
+    logout();
     setMode("onboarding");
   };
 
   const renderContent = () => {
     // If no user is logged in, AuthWrapper will show login/register
     // This content will only render when user is authenticated
+    if (!userId) return null;
+
     switch (mode) {
       case "onboarding":
         return <RoleSelection onSelectRole={handleSelectRole} />;
@@ -185,7 +193,11 @@ function App() {
 
   return (
     <AuthWrapper>
-      <Layout alertCount={alertCount}>
+      <Layout
+        alertCount={alertCount}
+        currentMode={mode}
+        onModeChange={handleModeChange}
+      >
         <div className="pb-20 md:pb-0">{renderContent()}</div>
       </Layout>
     </AuthWrapper>
