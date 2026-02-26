@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"pesalocal/internal/model"
@@ -100,8 +101,20 @@ func (s *SyncService) ProcessAllSyncOperations() error {
 		return err
 	}
 
+	// Track failures
+	var failedOps []string
+
 	for _, op := range ops {
-		_ = s.ProcessSyncOperation(op)
+		err := s.ProcessSyncOperation(op)
+		if err != nil {
+			// Log or track failed operation
+			failedOps = append(failedOps, op.ID)
+		}
+	}
+
+	if len(failedOps) > 0 {
+		// Return summary of failed ops
+		return fmt.Errorf("failed to process operations: %v", failedOps)
 	}
 
 	return nil
