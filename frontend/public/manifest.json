@@ -1,70 +1,46 @@
 {
-  "name": "PesaLocal",
-  "short_name": "PesaLocal",
-  "description": "Track M-PESA spending, manage business sales and stock — all stored locally on your device.",
+  "name": "Cashlet",
+  "short_name": "Cashlet",
+  "description": "Personal finance tracker — works fully offline",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "any",
-  "background_color": "#080A0C",
-  "theme_color": "#080A0C",
-  "lang": "en-KE",
-  "dir": "ltr",
-  "categories": ["finance", "business", "productivity"],
+  "theme_color": "#3bceac",
+  "background_color": "#0d3b2e",
+  "lang": "en",
+  "categories": ["finance", "productivity"],
   "icons": [
     {
-      "src": "/images/icons/icon.png",
-      "sizes": "72x72",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/images/icons/icon_round.png",
+      "src": "/icons/icon.png",
       "sizes": "96x96",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/images/icons/icon_forground.png",
-      "sizes": "128x128",
-      "type": "image/png",
-      "purpose": "any"
+      "src": "/icons/icon_round.png",
+      "sizes": "96x96",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon_foreground.png",
+      "sizes": "216x216",
+      "type": "image/png"
     }
   ],
   "screenshots": [
     {
-      "src": "/images/screenshots/desktop.png",
-      "sizes": "1280x800",
+      "src": "/screenshots/desktop.png",
+      "sizes": "1903x958",
       "type": "image/png",
-      "form_factor": "wide",
-      "label": "PesaLocal dashboard on desktop"
+      "form_factor": "wide"
     },
     {
-      "src": "/images/screenshots/mobile.png",
-      "sizes": "390x844",
+      "src": "/screenshots/mobile.png",
+      "sizes": "396x866",
       "type": "image/png",
-      "form_factor": "narrow",
-      "label": "PesaLocal dashboard on mobile"
+      "form_factor": "narrow" 
     }
   ],
-  "shortcuts": [
-    {
-      "name": "Personal Dashboard",
-      "short_name": "Personal",
-      "description": "Open your personal M-PESA tracker",
-      "url": "/?mode=personal",
-      "icons": [{ "src": "/icons/icon-96.png", "sizes": "96x96" }]
-    },
-    {
-      "name": "Business Dashboard",
-      "short_name": "Business",
-      "description": "Open your business sales tracker",
-      "url": "/?mode=business",
-      "icons": [{ "src": "/icons/icon-96.png", "sizes": "96x96" }]
-    }
-  ],
-  "related_applications": [],
-  "prefer_related_applications": false,
-  "handle_links": "preferred"
+  "prefer_related_applications": false
 }

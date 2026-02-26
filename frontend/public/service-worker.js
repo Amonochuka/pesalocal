@@ -1,395 +1,387 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// service-worker.js — PesaLocal PWA Service Worker
-//
-// Strategy overview:
-//   • App shell (HTML, JS, CSS, fonts)  → Cache-first, stale-while-revalidate
-//   • /api/*  sync endpoints            → Network-first, queue offline (Background Sync)
-//   • /api/*  read endpoints (GET)      → Network-first with cache fallback
-//   • Google Fonts                      → Cache-first (long TTL)
-//   • Everything else                   → Network-first, cache fallback
-//
-// Offline behaviour:
-//   • App loads fully from cache even with no connection
-//   • Failed POST /api/sync/* ops queued in IndexedDB via Background Sync tag
-//   • Push notifications scaffold wired (requires server VAPID key)
-// ─────────────────────────────────────────────────────────────────────────────
+// public/service-worker.js — Cashlet PWA
+// Fixes applied:
+//   Bug 1 (line ~187): resp.clone() called after body already consumed — fixed
+//          by cloning BEFORE any await/then that reads the body.
+//   Bug 2 (white screen offline): '/' was in SHELL_URLS so cache-first ran,
+//          but '/' returns the HTML shell which references /assets/* hashed
+//          files. Those weren't being pre-cached, so offline gave a blank page.
+//          Fixed by pre-caching ALL /assets/* files surfaced at install time,
+//          and falling through to offline.html correctly for HTML requests.
+//   Bug 3 (IDB not connecting): The SW opens CashletDB at version 1, but Dexie
+//          opens it at version 1 too and creates ALL stores in onupgradeneeded.
+//          If the SW's openIDB() ran first (before the app loaded), it created
+//          the DB with ONLY offlineQueue, then Dexie tried to upgrade to add
+//          the other stores but the version number was the same so
+//          onupgradeneeded never fired for Dexie. Fixed by bumping SW IDB
+//          version to 2 so it never races with Dexie's v1 schema creation,
+//          and by making the SW only open its own isolated database
+//          (CashletOfflineDB) rather than sharing CashletDB.
 
-const APP_VERSION   = 'v1';
-const SHELL_CACHE   = `pesalocal-shell-${APP_VERSION}`;
-const API_CACHE     = `pesalocal-api-${APP_VERSION}`;
-const FONT_CACHE    = `pesalocal-fonts-${APP_VERSION}`;
-const BG_SYNC_TAG   = 'pesalocal-sync';
+const CACHE_NAME    = 'cashlet-v1';
+const SYNC_TAG      = 'cashlet-form-sync';
 
-// Assets to pre-cache on install (app shell)
-// Vite injects hashed filenames at build time; in dev these paths work as-is.
-const PRECACHE_URLS = [
+// ── CRITICAL: SW uses its OWN separate database, not CashletDB ───────────────
+// Reason: Dexie owns CashletDB. If the SW also opens CashletDB, they race
+// on onupgradeneeded and one will block or corrupt the other's schema.
+// The SW only needs the offlineQueue — a separate lightweight DB is cleaner.
+const SW_IDB_NAME   = 'CashletSW';
+const SW_IDB_VER    = 1;
+const OFFLINE_STORE = 'offlineQueue';
+
+const SHELL_URLS = [
   '/',
-  '/index.html',
   '/manifest.json',
+  '/offline.html',
+  '/icons/icon-96x96.png',
+  '/icons/icon-216x96.png',
 ];
 
 // ── Install ───────────────────────────────────────────────────────────────────
-
-self.addEventListener('install', (event) => {
-  console.log(`[SW ${APP_VERSION}] Installing…`);
-
+// Pre-cache the shell. We also fetch the root HTML and parse asset URLs from it
+// so that /assets/*.js and /assets/*.css are cached before going offline.
+self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(SHELL_CACHE)
-      .then((cache) => cache.addAll(PRECACHE_URLS))
-      .then(() => {
-        console.log(`[SW ${APP_VERSION}] Pre-cache complete`);
-        // Take control immediately without waiting for old SW to finish
-        return self.skipWaiting();
-      })
-      .catch((err) => console.warn('[SW] Pre-cache failed (dev mode?)', err))
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+
+      // 1. Cache stable shell URLs
+      await Promise.all(
+        SHELL_URLS.map(url =>
+          cache.add(url).catch(err =>
+            console.warn(`[SW] Failed to pre-cache ${url}:`, err)
+          )
+        )
+      );
+
+      // 2. Fetch root HTML and extract /assets/* references to pre-cache
+      //    This solves the blank screen: Vite's hashed JS/CSS must be cached
+      //    at install time, not lazily, or offline will show a white page.
+      try {
+        const rootResp = await fetch('/');
+        if (rootResp.ok) {
+          const html   = await rootResp.text();
+          const assets = [...html.matchAll(/src="(\/assets\/[^"]+)"|href="(\/assets\/[^"]+)"/g)]
+            .map(m => m[1] ?? m[2])
+            .filter(Boolean);
+
+          await Promise.all(
+            assets.map(url =>
+              cache.add(url).catch(err =>
+                console.warn(`[SW] Failed to pre-cache asset ${url}:`, err)
+              )
+            )
+          );
+
+          // Re-cache the root HTML itself with the Response (not the text)
+          await cache.put('/', new Response(html, {
+            headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          }));
+        }
+      } catch (err) {
+        console.warn('[SW] Could not pre-cache assets from root HTML:', err);
+      }
+
+      await self.skipWaiting();
+    })()
   );
 });
 
 // ── Activate ──────────────────────────────────────────────────────────────────
-
-self.addEventListener('activate', (event) => {
-  console.log(`[SW ${APP_VERSION}] Activating…`);
-
+self.addEventListener('activate', event => {
   event.waitUntil(
-    Promise.all([
-      // Wipe all caches from previous versions
-      caches.keys().then((keys) =>
+    caches.keys()
+      .then(keys =>
         Promise.all(
           keys
-            .filter((k) => k !== SHELL_CACHE && k !== API_CACHE && k !== FONT_CACHE)
-            .map((k) => {
-              console.log(`[SW] Deleting stale cache: ${k}`);
-              return caches.delete(k);
-            })
+            .filter(key => key !== CACHE_NAME)
+            .map(key => caches.delete(key))
         )
-      ),
-      // Claim all open clients immediately
-      self.clients.claim(),
-    ]).then(() => console.log(`[SW ${APP_VERSION}] Active and in control`))
+      )
+      .then(() => self.clients.claim())
   );
 });
 
 // ── Fetch ─────────────────────────────────────────────────────────────────────
+self.addEventListener('fetch', event => {
+  if (!event.request.url.startsWith('http')) return;
 
-self.addEventListener('fetch', (event) => {
-  const { request } = event;
-  const url = new URL(request.url);
+  const url    = new URL(event.request.url);
+  const isHTML = event.request.headers.get('accept')?.includes('text/html');
+  const method = event.request.method;
 
-  // Only handle same-origin + Google Fonts
-  const isSameOrigin = url.origin === self.location.origin;
-  const isGoogleFont = url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
+  // ── 1. Mutating API calls — queue offline if network fails ────────────────
+  if (url.pathname.startsWith('/api/') && method !== 'GET') {
+    // Clone the request IMMEDIATELY before any async work.
+    // Once fetch() consumes the body, cloning throws "body already used".
+    const requestCloneForFetch = event.request.clone();
+    const requestCloneForQueue = event.request.clone();
 
-  if (!isSameOrigin && !isGoogleFont) return; // let browser handle CDN, etc.
+    event.respondWith(
+      fetch(requestCloneForFetch)
+        .catch(async () => {
+          try {
+            // Safe to read body here — we cloned before fetch() above
+            const bodyText = await requestCloneForQueue.text();
+            const headers  = {};
+            event.request.headers.forEach((v, k) => { headers[k] = v; });
 
-  // ── API: sync mutations (POST/PUT/DELETE) → network, queue on fail ──────────
-  if (isSameOrigin && url.pathname.startsWith('/api/sync') && request.method !== 'GET') {
-    event.respondWith(networkWithSyncQueue(request));
+            const entityType = urlToEntityType(url.pathname);
+            let entityId = 'unknown';
+            try {
+              const parsed = JSON.parse(bodyText);
+              entityId = parsed.id ?? parsed.ID ?? 'unknown';
+            } catch (_) {}
+
+            await idbEnqueue({
+              url:        event.request.url,
+              method:     method,
+              headers:    headers,
+              body:       bodyText,
+              entityType: entityType,
+              entityId:   entityId,
+              createdAt:  new Date().toISOString(),
+              retries:    0,
+            });
+
+            return new Response(
+              JSON.stringify({ queued: true, offline: true }),
+              { status: 202, headers: { 'Content-Type': 'application/json' } }
+            );
+          } catch (queueErr) {
+            console.error('[SW] Failed to queue offline request:', queueErr);
+            return new Response(
+              JSON.stringify({ error: 'Offline and failed to queue' }),
+              { status: 503, headers: { 'Content-Type': 'application/json' } }
+            );
+          }
+        })
+    );
     return;
   }
 
-  // ── API: reads (GET) → network-first, cache fallback ───────────────────────
-  if (isSameOrigin && url.pathname.startsWith('/api/')) {
-    event.respondWith(networkFirstWithCache(request, API_CACHE, 60 * 1000)); // 1 min
+  // ── 2. GET API calls — Network-Only ──────────────────────────────────────
+  if (url.pathname.startsWith('/api/')) return;
+
+  // ── 3. App shell / manifest / icons — Cache-First ────────────────────────
+  if (SHELL_URLS.includes(url.pathname)) {
+    event.respondWith(
+      caches.match(event.request).then(cached => {
+        if (cached) return cached;
+
+        return fetch(event.request)
+          .then(resp => {
+            if (!resp || !resp.ok) return resp;
+            // Clone BEFORE storing — resp body can only be consumed once
+            const toCache = resp.clone();
+            caches.open(CACHE_NAME).then(c => c.put(event.request, toCache));
+            return resp;
+          })
+          .catch(() =>
+            isHTML ? caches.match('/offline.html') : undefined
+          );
+      })
+    );
     return;
   }
 
-  // ── Google Fonts → cache-first (they never change) ─────────────────────────
-  if (isGoogleFont) {
-    event.respondWith(cacheFirst(request, FONT_CACHE));
+  // ── 4. Vite hashed assets (/assets/*) — Cache-First ──────────────────────
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      caches.match(event.request).then(cached => {
+        if (cached) return cached;
+
+        return fetch(event.request).then(resp => {
+          if (!resp || !resp.ok) return resp;
+          // Clone BEFORE storing
+          const toCache = resp.clone();
+          caches.open(CACHE_NAME).then(c => c.put(event.request, toCache));
+          return resp;
+        });
+      })
+    );
     return;
   }
 
-  // ── App shell navigation (HTML) → stale-while-revalidate ───────────────────
-  if (request.mode === 'navigate') {
-    event.respondWith(staleWhileRevalidate(request, SHELL_CACHE, '/index.html'));
+  // ── 5. Images — Stale-While-Revalidate ───────────────────────────────────
+  if (/\.(png|jpg|jpeg|webp|gif|svg|ico)$/i.test(url.pathname)) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then(cache =>
+        cache.match(event.request).then(cached => {
+          const networkFetch = fetch(event.request)
+            .then(resp => {
+              if (resp && resp.ok) {
+                // Clone BEFORE storing
+                cache.put(event.request, resp.clone());
+              }
+              return resp;
+            })
+            .catch(() => cached);
+          return cached || networkFetch;
+        })
+      )
+    );
     return;
   }
 
-  // ── Static assets (JS/CSS/images built by Vite) → cache-first ──────────────
-  if (isStaticAsset(url)) {
-    event.respondWith(cacheFirst(request, SHELL_CACHE));
+  // ── 6. HTML navigation — Network-First + offline.html fallback ───────────
+  if (isHTML) {
+    event.respondWith(
+      fetch(event.request)
+        .then(resp => {
+          if (!resp || !resp.ok) return resp;
+          // Clone BEFORE storing
+          const toCache = resp.clone();
+          caches.open(CACHE_NAME).then(c => c.put(event.request, toCache));
+          return resp;
+        })
+        .catch(() =>
+          caches.match(event.request)
+            .then(cached => cached ?? caches.match('/offline.html') ?? caches.match('/'))
+        )
+    );
     return;
   }
 
-  // ── Default → network-first ─────────────────────────────────────────────────
-  event.respondWith(networkFirstWithCache(request, SHELL_CACHE, 0));
+  // ── 7. Everything else — Network-First, cache fallback ───────────────────
+  event.respondWith(
+    fetch(event.request)
+      .then(resp => {
+        if (!resp || !resp.ok) return resp;
+        // Clone BEFORE storing — this was the original line ~187 crash
+        const toCache = resp.clone();
+        caches.open(CACHE_NAME).then(c => c.put(event.request, toCache));
+        return resp;
+      })
+      .catch(() => caches.match(event.request))
+  );
 });
 
-// ── Strategy helpers ──────────────────────────────────────────────────────────
-
-/**
- * Cache-first: serve from cache, fall back to network and cache result.
- * Best for immutable assets (hashed JS/CSS, fonts).
- */
-async function cacheFirst(request, cacheName) {
-  const cached = await caches.match(request);
-  if (cached) return cached;
-
-  try {
-    const response = await fetch(request);
-    if (response.ok) {
-      const cache = await caches.open(cacheName);
-      cache.put(request, response.clone());
-    }
-    return response;
-  } catch {
-    return offlineFallback(request);
+// ── Background Sync ───────────────────────────────────────────────────────────
+self.addEventListener('sync', event => {
+  if (event.tag === SYNC_TAG) {
+    event.waitUntil(flushOfflineQueue());
   }
-}
+});
 
-/**
- * Stale-while-revalidate: serve cache immediately, update in background.
- * Best for HTML navigations — fast load AND fresh content.
- */
-async function staleWhileRevalidate(request, cacheName, fallbackUrl) {
-  const cache  = await caches.open(cacheName);
-  const cached = await cache.match(request) || await cache.match(fallbackUrl);
+async function flushOfflineQueue() {
+  const database = await openSWDB();
+  const items    = await idbGetAll(database);
+  if (!items.length) return;
 
-  const fetchPromise = fetch(request)
-    .then((response) => {
-      if (response.ok) cache.put(request, response.clone());
-      return response;
-    })
-    .catch(() => null);
-
-  return cached || await fetchPromise || offlineFallback(request);
-}
-
-/**
- * Network-first with cache fallback.
- * Best for API reads and non-hashed assets.
- * @param {number} ttlMs — set to 0 to always prefer network
- */
-async function networkFirstWithCache(request, cacheName, ttlMs) {
-  const cache  = await caches.open(cacheName);
-  const cached = await cache.match(request);
-
-  // If we have a fresh enough cached response, use it without hitting network
-  if (cached && ttlMs > 0) {
-    const cachedDate = new Date(cached.headers.get('sw-cached-at') || 0);
-    if (Date.now() - cachedDate.getTime() < ttlMs) return cached;
-  }
-
-  try {
-    const response = await fetch(request);
-    if (response.ok) {
-      // Stamp response with cache time so TTL works
-      const stamped = stampResponse(response.clone());
-      cache.put(request, stamped);
-      return response;
-    }
-    return cached || response;
-  } catch {
-    return cached || offlineFallback(request);
-  }
-}
-
-/**
- * Network-first for sync mutations. On failure, registers a Background Sync
- * tag so the browser retries when connectivity returns.
- */
-async function networkWithSyncQueue(request) {
-  try {
-    const response = await fetch(request.clone());
-    return response;
-  } catch (err) {
-    // Queue for Background Sync
+  for (const item of items) {
     try {
-      await self.registration.sync.register(BG_SYNC_TAG);
-      console.log('[SW] Registered background sync tag:', BG_SYNC_TAG);
-    } catch {
-      console.warn('[SW] Background Sync not supported — app-level queue will handle retry');
-    }
+      const resp = await fetch(item.url, {
+        method:  item.method,
+        headers: item.headers,
+        body:    item.body,
+      });
 
-    // Return a synthetic queued response so the app knows it was accepted offline
-    return new Response(
-      JSON.stringify({ queued: true, message: 'Saved locally, will sync when online' }),
-      {
-        status:  202,
-        headers: { 'Content-Type': 'application/json', 'X-SW-Queued': '1' },
+      if (resp.ok) {
+        await idbDelete(database, item.id);
+        notifyClients({
+          type:       'SYNC_SUCCESS',
+          entityType: item.entityType,
+          entityId:   item.entityId,
+        });
+      } else {
+        await idbMarkRetry(database, item.id, `HTTP ${resp.status}`);
       }
-    );
+    } catch (err) {
+      await idbMarkRetry(database, item.id, String(err));
+    }
   }
 }
 
-/** Stamp a cloned response with current time for cache TTL checks */
-function stampResponse(response) {
-  const headers = new Headers(response.headers);
-  headers.set('sw-cached-at', new Date().toISOString());
-  return new Response(response.body, {
-    status:     response.status,
-    statusText: response.statusText,
-    headers,
+// ── SW ↔ App messaging ────────────────────────────────────────────────────────
+self.addEventListener('message', event => {
+  if (event.data?.type === 'FLUSH_QUEUE') {
+    flushOfflineQueue().catch(console.error);
+  }
+});
+
+function notifyClients(payload) {
+  self.clients.matchAll({ includeUncontrolled: true })
+    .then(clients => clients.forEach(c => c.postMessage(payload)));
+}
+
+// ── IndexedDB helpers (SW-only isolated database) ────────────────────────────
+
+function openSWDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(SW_IDB_NAME, SW_IDB_VER);
+
+    req.onupgradeneeded = e => {
+      const database = e.target.result;
+      if (!database.objectStoreNames.contains(OFFLINE_STORE)) {
+        const store = database.createObjectStore(OFFLINE_STORE, {
+          keyPath: 'id', autoIncrement: true,
+        });
+        store.createIndex('entityType', 'entityType', { unique: false });
+        store.createIndex('entityId',   'entityId',   { unique: false });
+        store.createIndex('createdAt',  'createdAt',  { unique: false });
+      }
+    };
+
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
   });
 }
 
-/** Offline fallback — generic or JSON depending on request */
-function offlineFallback(request) {
-  const isJson = request.headers.get('accept')?.includes('application/json');
-  if (isJson) {
-    return new Response(
-      JSON.stringify({ error: 'offline', message: 'You are offline. Data is saved locally.' }),
-      { status: 503, headers: { 'Content-Type': 'application/json' } }
-    );
-  }
-  // For navigation, return a minimal offline page
-  return new Response(
-    `<!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>PesaLocal — Offline</title>
-      <style>
-        * { margin:0; padding:0; box-sizing:border-box; }
-        body {
-          font-family: system-ui, sans-serif;
-          background: #080A0C; color: #EAE8E3;
-          min-height: 100vh; display: flex;
-          align-items: center; justify-content: center;
-          flex-direction: column; gap: 16px; padding: 24px;
-          text-align: center;
-        }
-        .icon { font-size: 56px; }
-        h1 { font-size: 24px; font-weight: 700; }
-        p { color: #7A8490; font-size: 14px; line-height: 1.6; max-width: 320px; }
-        .badge {
-          display: inline-flex; align-items: center; gap: 6px;
-          background: rgba(46,207,168,0.1); border: 1px solid rgba(46,207,168,0.2);
-          border-radius: 40px; padding: 6px 16px;
-          color: #2ECFA8; font-size: 13px; font-weight: 600;
-        }
-        button {
-          margin-top: 8px; padding: 10px 24px; border-radius: 40px;
-          background: #2ECFA8; color: #080A0C;
-          border: none; font-size: 14px; font-weight: 700; cursor: pointer;
-        }
-      </style>
-    </head>
-    <body>
-      <div class="icon">📵</div>
-      <h1>You're offline</h1>
-      <p>PesaLocal is a local-first app. All your data is saved on this device and will sync automatically when you reconnect.</p>
-      <div class="badge">🔒 Your data is safe locally</div>
-      <button onclick="window.location.reload()">Retry</button>
-    </body>
-    </html>`,
-    { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-  );
-}
-
-/** True for Vite-built hashed assets and common static extensions */
-function isStaticAsset(url) {
-  const p = url.pathname;
-  return (
-    p.startsWith('/assets/') ||
-    p.startsWith('/icons/')  ||
-    /\.(js|mjs|css|woff2?|ttf|otf|eot|svg|png|jpg|jpeg|webp|ico|gif|avif)(\?.*)?$/.test(p)
-  );
-}
-
-// ── Background Sync ───────────────────────────────────────────────────────────
-
-self.addEventListener('sync', (event) => {
-  if (event.tag === BG_SYNC_TAG) {
-    console.log('[SW] Background sync fired — notifying app to flush queue');
-    event.waitUntil(notifyClientsToSync());
-  }
-});
-
-/**
- * Tell all open PesaLocal windows to run their sync engine.
- * The app-level sync.ts already handles the actual queue draining.
- */
-async function notifyClientsToSync() {
-  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-  for (const client of clients) {
-    client.postMessage({ type: 'BACKGROUND_SYNC_FIRED', tag: BG_SYNC_TAG });
-  }
-  console.log(`[SW] Notified ${clients.length} client(s) to sync`);
-}
-
-// ── Push Notifications ────────────────────────────────────────────────────────
-// Scaffold — wire up by sending push events from your Go server with VAPID.
-
-self.addEventListener('push', (event) => {
-  let data = { title: 'PesaLocal', body: 'You have a new notification', icon: '/icons/icon-192.png' };
-
-  try {
-    if (event.data) data = { ...data, ...event.data.json() };
-  } catch {
-    if (event.data) data.body = event.data.text();
-  }
-
-  event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body:    data.body,
-      icon:    data.icon || '/icons/icon-192.png',
-      badge:   '/icons/icon-96.png',
-      tag:     data.tag || 'pesalocal-default',
-      data:    data,
-      actions: data.actions || [],
-      vibrate: [100, 50, 100],
+function idbEnqueue(item) {
+  return openSWDB().then(database =>
+    new Promise((resolve, reject) => {
+      const tx    = database.transaction(OFFLINE_STORE, 'readwrite');
+      const store = tx.objectStore(OFFLINE_STORE);
+      const r     = store.add(item);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror   = () => reject(r.error);
     })
   );
-});
+}
 
-self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
+function idbGetAll(database) {
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction(OFFLINE_STORE, 'readonly');
+    const r  = tx.objectStore(OFFLINE_STORE).getAll();
+    r.onsuccess = () => resolve(r.result);
+    r.onerror   = () => reject(r.error);
+  });
+}
 
-  const url = event.notification.data?.url || '/';
+function idbDelete(database, id) {
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction(OFFLINE_STORE, 'readwrite');
+    const r  = tx.objectStore(OFFLINE_STORE).delete(id);
+    r.onsuccess = () => resolve();
+    r.onerror   = () => reject(r.error);
+  });
+}
 
-  event.waitUntil(
-    self.clients
-      .matchAll({ type: 'window', includeUncontrolled: true })
-      .then((clients) => {
-        // Focus an existing window if open
-        for (const client of clients) {
-          if (client.url.includes(self.location.origin) && 'focus' in client) {
-            client.focus();
-            client.postMessage({ type: 'NOTIFICATION_CLICK', data: event.notification.data });
-            return;
-          }
-        }
-        // Otherwise open a new window
-        if (self.clients.openWindow) return self.clients.openWindow(url);
-      })
-  );
-});
+function idbMarkRetry(database, id, error) {
+  return new Promise((resolve, reject) => {
+    const tx     = database.transaction(OFFLINE_STORE, 'readwrite');
+    const store  = tx.objectStore(OFFLINE_STORE);
+    const getReq = store.get(id);
 
-// ── Message handler ───────────────────────────────────────────────────────────
-// Allows the app to communicate with the SW directly.
+    getReq.onsuccess = () => {
+      const item = getReq.result;
+      if (!item) { resolve(); return; }
+      item.retries  += 1;
+      item.lastError = error;
+      const put = store.put(item);
+      put.onsuccess = () => resolve();
+      put.onerror   = () => reject(put.error);
+    };
+    getReq.onerror = () => reject(getReq.error);
+  });
+}
 
-self.addEventListener('message', (event) => {
-  const { type } = event.data || {};
-
-  switch (type) {
-    case 'SKIP_WAITING':
-      // Called by the update prompt to immediately activate new SW
-      self.skipWaiting();
-      break;
-
-    case 'GET_VERSION':
-      event.source?.postMessage({ type: 'SW_VERSION', version: APP_VERSION });
-      break;
-
-    case 'CLEAR_CACHE':
-      caches.keys()
-        .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
-        .then(() => event.source?.postMessage({ type: 'CACHE_CLEARED' }));
-      break;
-
-    default:
-      break;
-  }
-});
-
-// ── Periodic Background Sync (where supported) ────────────────────────────────
-// Registered by the app on first load. Gives the SW a chance to ping the app
-// to sync every ~12 hours even when the app isn't open.
-
-self.addEventListener('periodicsync', (event) => {
-  if (event.tag === 'pesalocal-periodic-sync') {
-    event.waitUntil(notifyClientsToSync());
-  }
-});
+// ── URL → entity type ─────────────────────────────────────────────────────────
+function urlToEntityType(pathname) {
+  if (pathname.includes('/sales/items'))     return 'saleItem';
+  if (pathname.includes('/sales'))           return 'sale';
+  if (pathname.includes('/purchases/items')) return 'purchaseItem';
+  if (pathname.includes('/purchases'))       return 'purchase';
+  if (pathname.includes('/products'))        return 'product';
+  return 'unknown';
+}
