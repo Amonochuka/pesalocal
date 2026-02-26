@@ -1,0 +1,5 @@
+# Ignore local SQLite database
+pesalocal.db
+
+# Ignore JSON test files
+*.json
